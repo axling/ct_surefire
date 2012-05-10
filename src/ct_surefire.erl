@@ -38,7 +38,10 @@
                 curr_log_dir,
                 timer, tc_log,
                 test_cases = [],
-                test_suites = []}).
+                test_suites = [],
+                url_base="",
+                base_log_dir="",
+                dest_dir}).
 
 -record(testcase, { log, group, classname, name, time, failure, timestamp }).
 -record(testsuite, { errors, failures, hostname, name, tests,
@@ -71,7 +74,19 @@ add_handler(EventMgr) ->
 %%--------------------------------------------------------------------
 init([]) ->
     {ok,
-     #state{hostname = string:strip(os:cmd("hostname"), right,$\n)}}.
+     #state{hostname=string:strip(os:cmd("hostname"), right,$\n)}};
+init(UrlBase) ->
+    case init:get_argument(surefire_dest_dir) of
+        {ok, DestDir} ->
+            {ok,
+             #state{url_base=UrlBase,
+                    hostname=string:strip(os:cmd("hostname"), right,$\n),
+                    dest_dir=DestDir}};
+        error ->
+            {ok,
+             #state{url_base=UrlBase,
+                    hostname=string:strip(os:cmd("hostname"), right,$\n)}}
+    end.
 
 %%--------------------------------------------------------------------
 %% @spec handle_event(Event, State) -> Return
@@ -104,8 +119,8 @@ handle_event(#event{name=tc_logfile, data={_SuiteFunc, TcLogFile}}, State) ->
 handle_event(#event{name=tc_done, data={Suite, end_per_suite, Result}},
              #state{file=FileWriter, timer=Ts, tc_log = Log,
                     curr_group=Groups}=State) ->
-    io:format(user, "Received end_per_suite~n", []),
-    Tc = end_tc(Suite, end_per_suite, Ts, Groups, Result, Log),
+    LogLink = get_log_link(Log, State),
+    Tc = end_tc(Suite, end_per_suite, Ts, Groups, Result, LogLink),
     Tcs = [Tc | State#state.test_cases],
     Total = length(Tcs),
     Succ = length(lists:filter(fun(#testcase{ failure = F }) ->
@@ -126,7 +141,8 @@ handle_event(#event{name=tc_done, data={Suite, end_per_suite, Result}},
     {ok, State#state{test_cases=[]}};
 handle_event(#event{name=tc_done, data={Suite, FuncOrGroup, Result}},
              #state{timer=Ts, tc_log=Log, curr_group=Groups}=State) ->
-    Tc = end_tc(Suite, FuncOrGroup, Ts, Groups, Result, Log),
+    LogLink = get_log_link(Log, State),
+    Tc = end_tc(Suite, FuncOrGroup, Ts, Groups, Result, LogLink),
     NewCurrGroup = get_new_group(FuncOrGroup, Groups),
     {ok, State#state{test_cases=[Tc | State#state.test_cases],
                      curr_group=NewCurrGroup}};
@@ -160,7 +176,8 @@ handle_event(#event{name=TcSkip, data={Suite, FuncOrGroup, Reason}},
     {ok, State#state{test_cases=[Tc | State#state.test_cases],
                      curr_group=NewCurrGroup}};
 handle_event(#event{name=test_start, data={_Time, LogDir}}, State) ->
-    LogFile = filename:join(LogDir, "junit_report.xml"),
+    SelectedLogDir = create_log_dir_filename(LogDir, State),
+    LogFile = filename:join(SelectedLogDir, "junit_report.xml"),
     Pid = proc_lib:spawn(?MODULE, file_writer, [LogFile]),
     Pid ! {write, "<?xml version=\"1.0\" encoding= \"UTF-8\" ?>"},
     Pid ! {write, "<testsuites>"},
@@ -170,7 +187,9 @@ handle_event(#event{name=test_done}, #state{file=FileWriter}=State) ->
     FileWriter ! {self(), close},
     receive {FileWriter, closed} -> ok end,
     {ok, State};
-handle_event(Event, State) ->
+handle_event(#event{name=start_logging, data=LogDir}, State) ->
+    {ok, State#state{base_log_dir=LogDir}};
+handle_event(_Event, State) ->
     {ok, State}.
 
 %%--------------------------------------------------------------------
@@ -270,17 +289,32 @@ to_xml(#testcase{group = Group, classname = CL, log = L, name = Name,
      [["group=\"",Group,"\""]||Group /= ""]," "
      "name=\"",N,"\" "
      "time=\"",T,"\" "
-     "timestamp=\"",TS,"\" "
-     "log=\"",L,"\">",
+     "timestamp=\"",TS,"\" ",
+     [["log=\"",L,"\""]||L /= ""], ">",
      case F of
          passed ->
              [];
          {skipped,Reason} ->
-             ["<skipped type=\"skip\" message=\"Test ",N," in ",CL,
-              " skipped!\">", sanitize(Reason),"</skipped>"];
+             case L of
+                 "" ->
+                     ["<skipped type=\"skip\" message=\"Test ",N," in ",CL,
+                      " skipped!\">", sanitize(Reason),"</skipped>"];
+                 _Else ->
+                     ["<skipped type=\"skip\" message=\"Test ",N," in ",CL,
+                      " skipped!\">", "Test log link: ", L, " ",
+                      sanitize(Reason),"</skipped>"]
+                 end;
          {fail,Reason} ->
-             ["<failure message=\"Test ",N," in ",CL," failed!\" type=\"crash\">",
-              sanitize(Reason),"</failure>"]
+             case L of
+                 "" ->
+                     ["<failure message=\"Test ",N," in ",CL,
+                      " failed!\" type=\"crash\">",
+                      sanitize(Reason), "</failure>"];
+                 _Else ->
+                     ["<failure message=\"Test ",N," in ",CL,
+                      " failed!\" type=\"crash\">", "Test log link: ", L,
+                      sanitize(Reason), "</failure>"]
+             end
      end,"</testcase>"];
 to_xml(#testsuite{ package = P, hostname = H, errors = E, time = Time, timestamp = TS,
                    tests = T, name = N, testcases = Cases }) ->
@@ -292,7 +326,7 @@ to_xml(#testsuite{ package = P, hostname = H, errors = E, time = Time, timestamp
      [["timestamp=\"",TS,"\" "]||TS /= undefined],
      "errors=\"",integer_to_list(E),"\" "
      "tests=\"",integer_to_list(T),"\">",
-     [to_xml(Case) || Case <- Cases],
+     [to_xml(Case) || Case <- lists:reverse(Cases)],
      "</testsuite>"];
 to_xml(#state{ test_suites = TestSuites, axis = Axis, properties = Props }) ->
     ["<testsuites>",properties_to_xml(Axis,Props),[to_xml(TestSuite) || TestSuite <- TestSuites],"</testsuites>"].
@@ -319,6 +353,10 @@ sanitize([H|T]) ->
 sanitize([]) ->
     [].
 
+get_log_link(Log, State) ->
+    RelativeLink = lists:nthtail(length(State#state.base_log_dir), Log),
+    State#state.url_base ++ RelativeLink.
+
 file_writer(File) ->
     {ok, D} = file:open(File, [write]),
     loop(D).
@@ -332,6 +370,14 @@ loop(File) ->
             catch file:sync(File),
             catch file:close(File),
             Pid ! {self(), closed}
+    end.
+
+create_log_dir_filename(LogDir, State) ->
+    case State#state.dest_dir of
+        undefined ->
+            LogDir;
+        DestDir ->
+            DestDir
     end.
 
 example_xml() ->
