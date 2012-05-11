@@ -149,6 +149,7 @@ handle_event(#event{name=tc_done, data={Suite, FuncOrGroup, Result}},
 handle_event(#event{name=TcSkip, data={Suite, end_per_suite, Reason}},
              #state{file=FileWriter, timer=Ts, curr_group=Groups}=State)
   when TcSkip == tc_auto_skip; TcSkip == tc_user_skip ->
+    end_tc(Suite, end_per_suite, Ts, Groups, {skipped,Reason}, ""),
     Tc = end_tc(Suite, end_per_suite, Ts, Groups, Reason, ""),
     Tcs = [Tc | State#state.test_cases],
     Total = length(Tcs),
@@ -171,7 +172,7 @@ handle_event(#event{name=TcSkip, data={Suite, end_per_suite, Reason}},
 handle_event(#event{name=TcSkip, data={Suite, FuncOrGroup, Reason}},
              #state{timer=Ts, curr_group=Groups}=State)
   when TcSkip == tc_auto_skip; TcSkip == tc_user_skip ->
-    Tc = end_tc(Suite, FuncOrGroup, Ts, Groups, Reason, ""),
+    Tc = end_tc(Suite, FuncOrGroup, Ts, Groups, {skipped, Reason}, ""),
     NewCurrGroup = get_new_group(FuncOrGroup, Groups),
     {ok, State#state{test_cases=[Tc | State#state.test_cases],
                      curr_group=NewCurrGroup}};
@@ -188,7 +189,9 @@ handle_event(#event{name=test_done}, #state{file=FileWriter}=State) ->
     receive {FileWriter, closed} -> ok end,
     {ok, State};
 handle_event(#event{name=start_logging, data=LogDir}, State) ->
-    {ok, State#state{base_log_dir=LogDir}};
+    RealRootDir = filename:dirname(LogDir),
+    io:format(user, "RealRootLogDir: ~s~n", [RealRootDir]),
+    {ok, State#state{base_log_dir=RealRootDir}};
 handle_event(_Event, State) ->
     {ok, State}.
 
@@ -301,7 +304,7 @@ to_xml(#testcase{group = Group, classname = CL, log = L, name = Name,
                       " skipped!\">", sanitize(Reason),"</skipped>"];
                  _Else ->
                      ["<skipped type=\"skip\" message=\"Test ",N," in ",CL,
-                      " skipped!\">", "Test log link: ", L, " ",
+                      " skipped!\">", "Test log link: ", L, "\n",
                       sanitize(Reason),"</skipped>"]
                  end;
          {fail,Reason} ->
@@ -312,7 +315,7 @@ to_xml(#testcase{group = Group, classname = CL, log = L, name = Name,
                       sanitize(Reason), "</failure>"];
                  _Else ->
                      ["<failure message=\"Test ",N," in ",CL,
-                      " failed!\" type=\"crash\">", "Test log link: ", L,
+                      " failed!\" type=\"crash\">", "Test log link: ", L, "\n",
                       sanitize(Reason), "</failure>"]
              end
      end,"</testcase>"];

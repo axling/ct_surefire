@@ -4,7 +4,7 @@
 %%% @doc
 %%% @end
 %%%-------------------------------------------------------------------
--module(normal_SUITE).
+-module(all_skipped_SUITE).
 
 -compile(export_all).
 
@@ -12,18 +12,17 @@
 
 all() ->
     [{group, group1},
-     {group, group2},
-     {group, group3}].
+     {group, group2}].
 
 groups() ->
     [{group1, [], [tc1, tc2, tc3]},
-     {group2, [], [tc1, tc2]},
-     {group3, [], [tc1, tc2]}].
+     {group2, [], [tc1, tc2]}].
 
 suite() ->
     [].
 
 init_per_suite(Config) ->
+    1=2,
     Config.
 
 end_per_suite(_Config) ->
@@ -39,8 +38,6 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     ok.
 
-init_per_group(group3, Config) ->
-    1=2;
 init_per_group(_Group, Config) ->
     Config.
 
