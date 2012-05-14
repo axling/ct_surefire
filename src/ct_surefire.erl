@@ -32,8 +32,7 @@
 %%--------------------------------------------------------------------
 %% Records
 %%--------------------------------------------------------------------
-
--record(state, {file, axis=[], properties=[], package="pkg", hostname,
+-record(state, {file, axis=[], properties=[], package, hostname,
                 curr_suite, curr_suite_ts, curr_group = [], curr_tc,
                 curr_log_dir,
                 timer, tc_log,
@@ -149,8 +148,7 @@ handle_event(#event{name=tc_done, data={Suite, FuncOrGroup, Result}},
 handle_event(#event{name=TcSkip, data={Suite, end_per_suite, Reason}},
              #state{file=FileWriter, timer=Ts, curr_group=Groups}=State)
   when TcSkip == tc_auto_skip; TcSkip == tc_user_skip ->
-    end_tc(Suite, end_per_suite, Ts, Groups, {skipped,Reason}, ""),
-    Tc = end_tc(Suite, end_per_suite, Ts, Groups, Reason, ""),
+    Tc = end_tc(Suite, end_per_suite, Ts, Groups, {skipped, Reason}, ""),
     Tcs = [Tc | State#state.test_cases],
     Total = length(Tcs),
     Succ = length(lists:filter(fun(#testcase{ failure = F }) ->
