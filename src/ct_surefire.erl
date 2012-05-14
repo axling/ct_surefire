@@ -267,7 +267,10 @@ get_result(ok) ->
 get_result({skipped, SkipReason}) ->
     {skipped, lists:flatten(io_lib:format("~p",[SkipReason]))};
 get_result({failed, FailReason}) ->
-    {fail, lists:flatten(io_lib:format("~p",[FailReason]))}.
+    {fail, lists:flatten(io_lib:format("~p",[FailReason]))};
+get_result(OtherError) ->
+    {fail, lists:flatten(io_lib:format("~p",[OtherError]))}.
+
 
 get_new_group({end_per_group, _Group, _GroupProp}, Groups) ->
     tl(Groups);
